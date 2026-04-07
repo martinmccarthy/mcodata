@@ -62,39 +62,17 @@ def store_flight_data():
         json.dump(flights, f, indent=4)
 
 
-def retrieve_flight_data(flight_id):
+def retrieve_flight_data(**filters):
     filename = f"flights_{datetime.now().strftime('%Y-%m-%d')}.json"
     with open(filename, 'r') as f:
         data = json.load(f)
-        for i in data:
-            if i['id'] == flight_id:
-                return i
-        
-    return None
-# store_flight_data()
+    results = [
+        flight for flight in data
+        if all(flight.get(k) == v for k, v in filters.items())
+    ]
+    return results if results else None
 
-
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "retrieve_flight_data",
-            "description": "Get the information from the JSON file based on this flight ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "The Flight ID, e.g. DL1705"
-                    },
-                },
-                "required": ["id"]
-            }
-        }
-    }
-]
-
-def get_completion(messages, model="gpt-3.5-turbo-1106", temperature=0, max_tokens=300, tools=None):
+def get_completion(messages, model="gpt-4o-mini", temperature=0, max_tokens=300, tools=None):
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -104,24 +82,66 @@ def get_completion(messages, model="gpt-3.5-turbo-1106", temperature=0, max_toke
     )
     return response.choices[0].message
 
-x = input()
+def query_flights(message):
+    # we really should never do this, run a script thatll collect this data beforehand as itll take time to populate the flight
+    # info, delaying a response
+    if not check_for_data():
+        store_flight_data()
 
-messages = [
+    messages = [
+        {
+            "role": "user",
+            "content": message
+        }
+    ]
+
+    tools = [
     {
-        "role": "user",
-        "content": x
-    }
-]
+        "type": "function",
+        "function": {
+            "name": "retrieve_flight_data",
+            "description": "Search for flights matching any combination of flight fields. Returns all matching flights.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "The Flight ID, e.g. DL1705"
+                    },
+                    "departure_airport": {
+                        "type": "string",
+                        "description": "Full name of the departure airport"
+                    },
+                    "departure_city": {
+                        "type": "string",
+                        "description": "City of departure"
+                    },
+                    "arrival_airport": {
+                        "type": "string",
+                        "description": "Full name of the arrival airport"
+                    },
+                    "arrival_city": {
+                        "type": "string",
+                        "description": "City of arrival"
+                    },
+                    "departure_time": {
+                        "type": "string",
+                        "description": "Scheduled departure time (ISO 8601)"
+                    },
+                    "arrival_time": {
+                        "type": "string",
+                        "description": "Estimated arrival time (ISO 8601)"
+                    }
+                },
+                "required": []
+            }
+        }
+    }]
 
-response = get_completion(messages, tools=tools)
+    response = get_completion(messages, tools=tools)
 
-if response.tool_calls:
-    for call in response.tool_calls:
-        print("Tool:", call.function.name)
-        print("Args:", call.function.arguments)
-        args = json.loads(call.function.arguments)
-        info = retrieve_flight_data(args["id"])
-        print(info)
-else:
-    print(response.content)
-
+    if response.tool_calls:
+        for call in response.tool_calls:
+            args = json.loads(call.function.arguments)
+            info = retrieve_flight_data(**args)
+            return info
